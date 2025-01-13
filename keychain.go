@@ -52,6 +52,7 @@ func (m validationError) Error() string {
 type KeyChain[T any] interface {
 	DelValidator(label ID)
 	GetValidator(label ID) func(a T) (bool, error)
+	Reset()
 	SetValidator(label ID, fn func(a T) (bool, error))
 	Validate(data T, defaultLabel ID) (ID, bool, []error)
 }
