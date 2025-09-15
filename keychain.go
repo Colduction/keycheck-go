@@ -150,7 +150,7 @@ func (kc *keyChain[T]) Validate(data T, defaultLabel ID) (ID, bool, []error) {
 			if fn = kc.validators.Get(label); fn == nil {
 				continue
 			}
-			if ok, err = fn(data); !ok {
+			if ok, _ = fn(data); !ok {
 				lbl = label
 				continue
 			}
