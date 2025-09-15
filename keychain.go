@@ -122,6 +122,9 @@ func (kc *keyChain[T]) SetCondition(condition BitwiseID) error {
 	if kc == nil {
 		return errw.NewErrorString("receiver is nil")
 	}
+	if !condition.IsValid() {
+		return errw.NewErrorString("invalid validator bitwise operator id", strconv.FormatUint(uint64(condition), 10))
+	}
 	kc.condition = condition
 	return nil
 }
