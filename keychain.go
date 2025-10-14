@@ -183,9 +183,8 @@ func (kc *keyChain[T]) Validate(data T, defaultLabel ID) (ID, bool, []error) {
 				return label, ok, nil
 			}
 			errs = append(errs, errw.NewError(err, string(label)))
-			lbl = label
 		}
-		return lbl, false, errs
+		return defaultLabel, false, errs
 	case XOR:
 		var trueCount uint
 		for _, label := range kc.order {
