@@ -1,13 +1,27 @@
 package keycheck
 
 import (
+	"fmt"
 	"slices"
-	"strconv"
-
-	"github.com/colduction/errorwrapper/v1"
 )
 
-var errw = errorwrapper.New('.', "KeyChain")
+type (
+	ErrInvalidBitwiseID BitwiseID
+	ErrNoValidatorExist struct{}
+	ErrNilReceiver      struct{}
+)
+
+func (err ErrInvalidBitwiseID) Error() string {
+	return fmt.Sprintf("keycheck: invalid bitwise operator ID %d", uint8(err))
+}
+
+func (err ErrNoValidatorExist) Error() string {
+	return "keycheck: no validators registered"
+}
+
+func (err ErrNilReceiver) Error() string {
+	return "keycheck: nil receiver"
+}
 
 type (
 	BitwiseID uint8 // Bitwise Operator ID
@@ -61,7 +75,7 @@ type keyChain[T any] struct {
 // condition is invalid.
 func NewKeyChain[T any](condition BitwiseID) (KeyChain[T], error) {
 	if !condition.IsValid() {
-		return nil, errw.NewErrorString("invalid validator bitwise operator id", strconv.FormatUint(uint64(condition), 10))
+		return nil, ErrInvalidBitwiseID(condition)
 	}
 	return &keyChain[T]{
 		validators: validatorsMap[T]{},
@@ -74,10 +88,10 @@ func NewKeyChain[T any](condition BitwiseID) (KeyChain[T], error) {
 // from the keychain.
 func (kc *keyChain[T]) DelValidator(label ID) error {
 	if kc == nil {
-		return errw.NewErrorString("receiver is nil")
+		return ErrNilReceiver{}
 	}
 	if kc.validators == nil {
-		return errw.NewErrorString("no validator is exist")
+		return ErrNoValidatorExist{}
 	}
 	if _, exists := kc.validators[label]; exists {
 		kc.order = slices.DeleteFunc(kc.order, func(id ID) bool {
@@ -92,10 +106,10 @@ func (kc *keyChain[T]) DelValidator(label ID) error {
 // the function and a nil error if found, otherwise nil and an error.
 func (kc *keyChain[T]) GetValidator(label ID) (func(a T) (bool, error), error) {
 	if kc == nil {
-		return nil, errw.NewErrorString("receiver is nil")
+		return nil, ErrNilReceiver{}
 	}
 	if kc.validators == nil {
-		return nil, errw.NewErrorString("no validator is exist")
+		return nil, ErrNoValidatorExist{}
 	}
 	return kc.validators.Get(label), nil
 }
@@ -104,7 +118,7 @@ func (kc *keyChain[T]) GetValidator(label ID) (func(a T) (bool, error), error) {
 // It also maintains the order in which validators were added.
 func (kc *keyChain[T]) SetValidator(label ID, fn func(a T) (bool, error)) error {
 	if kc == nil {
-		return errw.NewErrorString("receiver is nil")
+		return ErrNilReceiver{}
 	}
 	if kc.validators == nil {
 		kc.validators = validatorsMap[T]{}
@@ -120,10 +134,10 @@ func (kc *keyChain[T]) SetValidator(label ID, fn func(a T) (bool, error)) error 
 // governs the overall validation logic.
 func (kc *keyChain[T]) SetCondition(condition BitwiseID) error {
 	if kc == nil {
-		return errw.NewErrorString("receiver is nil")
+		return ErrNilReceiver{}
 	}
 	if !condition.IsValid() {
-		return errw.NewErrorString("invalid validator bitwise operator id", strconv.FormatUint(uint64(condition), 10))
+		return ErrInvalidBitwiseID(condition)
 	}
 	kc.condition = condition
 	return nil
@@ -135,7 +149,7 @@ func (kc *keyChain[T]) SetCondition(condition BitwiseID) error {
 // encountered.
 func (kc *keyChain[T]) Validate(data T, defaultLabel ID) (ID, bool, []error) {
 	if kc == nil {
-		return "", false, []error{errw.NewErrorString("receiver is nil")}
+		return "", false, []error{ErrNilReceiver{}}
 	}
 	if kc.validators == nil {
 		return defaultLabel, false, nil
@@ -157,7 +171,6 @@ func (kc *keyChain[T]) Validate(data T, defaultLabel ID) (ID, bool, []error) {
 				lbl = label
 				continue
 			}
-			errs = append(errs, errw.NewError(nil, string(label)))
 			return defaultLabel, false, errs
 		}
 		return lbl, true, nil
@@ -168,7 +181,7 @@ func (kc *keyChain[T]) Validate(data T, defaultLabel ID) (ID, bool, []error) {
 			}
 			ok, err = fn(data)
 			if !ok {
-				return defaultLabel, false, append(errs, errw.NewError(err, string(label)))
+				return defaultLabel, false, append(errs, err)
 			}
 			lbl = label
 		}
@@ -182,7 +195,7 @@ func (kc *keyChain[T]) Validate(data T, defaultLabel ID) (ID, bool, []error) {
 			if ok {
 				return label, ok, nil
 			}
-			errs = append(errs, errw.NewError(err, string(label)))
+			errs = append(errs, err)
 		}
 		return defaultLabel, false, errs
 	case XOR:
@@ -198,7 +211,7 @@ func (kc *keyChain[T]) Validate(data T, defaultLabel ID) (ID, bool, []error) {
 					return defaultLabel, false, nil
 				}
 			} else {
-				errs = append(errs, errw.NewError(err, string(label)))
+				errs = append(errs, err)
 			}
 			lbl = label
 		}
