@@ -23,24 +23,13 @@ func (err ErrNilReceiver) Error() string {
 	return "keycheck: nil receiver"
 }
 
-type (
-	BitwiseID uint8 // Bitwise Operator ID
-	ID        string
-)
+type BitwiseID uint8 // Bitwise Operator ID
 
 const (
 	NOT BitwiseID = iota // Bitwise NOT
 	AND                  // Bitwise AND
 	OR                   // Bitwise OR
 	XOR                  // Bitwise XOR (exclusive OR)
-
-	SUCCESS ID = "SUCCESS"
-	FAIL    ID = "FAIL"
-	INVALID ID = "INVALID"
-	CUSTOM  ID = "CUSTOM"
-	RETRY   ID = "RETRY"
-	BAN     ID = "BAN"
-	NONE    ID = "NONE"
 )
 
 var bitwiseOps = [...]BitwiseID{
@@ -50,24 +39,97 @@ var bitwiseOps = [...]BitwiseID{
 	XOR,
 }
 
+type (
+	StatusGetter interface {
+		Clone() Status
+		GetDetails() string
+		GetID() string
+		Marshal(f func(v any) ([]byte, error)) ([]byte, error)
+	}
+	StatusSetter interface {
+		SetDetails(details string)
+		SetID(id string)
+		Unmarshal(f func(data []byte, v any) error, b []byte) error
+		Reset()
+	}
+	StatusGetSetter interface {
+		StatusGetter
+		StatusSetter
+	}
+)
+
+type Status struct {
+	ID      string `json:"id,omitempty"`
+	Details string `json:"details,omitempty"`
+}
+
+func (s Status) Clone() Status {
+	return Status{
+		ID:      s.ID,
+		Details: s.Details,
+	}
+}
+
+func (s *Status) GetID() string {
+	return s.ID
+}
+
+func (s *Status) SetID(id string) {
+	s.ID = id
+}
+
+func (s *Status) GetDetails() string {
+	return s.Details
+}
+
+func (s *Status) SetDetails(details string) {
+	s.Details = details
+}
+
+func (s *Status) Marshal(f func(v any) ([]byte, error)) ([]byte, error) {
+	return f(s)
+}
+
+func (s *Status) Unmarshal(f func(data []byte, v any) error, b []byte) error {
+	return f(b, s)
+}
+
+func (s *Status) Reset() {
+	if s == nil {
+		return
+	}
+	s.Details = ""
+	s.ID = ""
+}
+
+var (
+	SUCCESS StatusGetter = &Status{ID: "SUCCESS"}
+	FAIL    StatusGetter = &Status{ID: "FAIL"}
+	INVALID StatusGetter = &Status{ID: "INVALID"}
+	CUSTOM  StatusGetter = &Status{ID: "CUSTOM"}
+	RETRY   StatusGetter = &Status{ID: "RETRY"}
+	BAN     StatusGetter = &Status{ID: "BAN"}
+	NONE    StatusGetter = &Status{ID: "NONE"}
+)
+
 // IsValid checks if the BitwiseID is a defined operator.
-func (bi BitwiseID) IsValid() bool {
-	return int(bi) < len(bitwiseOps)
+func (bid BitwiseID) IsValid() bool {
+	return int(bid) < len(bitwiseOps)
 }
 
 type KeyChain[T any] interface {
-	DelValidator(label ID) error
-	GetValidator(label ID) (func(a T) (bool, error), error)
+	DelValidator(label string) error
+	GetValidator(label string) (Status, func(a T) (bool, error), error)
 	Reset()
 	SetCondition(condition BitwiseID) error
-	SetValidator(label ID, fn func(a T) (bool, error)) error
-	Validate(data T, defaultLabel ID) (ID, bool, []error)
+	SetValidator(status Status, fn func(a T) (bool, error)) error
+	Validate(data T, defaultStatus StatusGetter) (StatusGetter, bool, []error)
 }
 
 type keyChain[T any] struct {
 	validators validatorsMap[T]
 	condition  BitwiseID
-	order      []ID
+	order      []string
 }
 
 // NewKeyChain creates and returns a new KeyChain instance with a specified
@@ -80,13 +142,13 @@ func NewKeyChain[T any](condition BitwiseID) (KeyChain[T], error) {
 	return &keyChain[T]{
 		validators: validatorsMap[T]{},
 		condition:  condition,
-		order:      []ID{},
+		order:      []string{},
 	}, nil
 }
 
 // DelValidator removes a validator function, identified by its label,
 // from the keychain.
-func (kc *keyChain[T]) DelValidator(label ID) error {
+func (kc *keyChain[T]) DelValidator(label string) error {
 	if kc == nil {
 		return ErrNilReceiver{}
 	}
@@ -94,7 +156,7 @@ func (kc *keyChain[T]) DelValidator(label ID) error {
 		return ErrNoValidatorExist{}
 	}
 	if _, exists := kc.validators[label]; exists {
-		kc.order = slices.DeleteFunc(kc.order, func(id ID) bool {
+		kc.order = slices.DeleteFunc(kc.order, func(id string) bool {
 			return id == label
 		})
 	}
@@ -103,30 +165,32 @@ func (kc *keyChain[T]) DelValidator(label ID) error {
 }
 
 // GetValidator retrieves a validator function by its label. It returns
-// the function and a nil error if found, otherwise nil and an error.
-func (kc *keyChain[T]) GetValidator(label ID) (func(a T) (bool, error), error) {
+// the status, the function and a nil error if found, otherwise zero
+// Status, nil function, and nil error (for compatibility with previous behaviour).
+func (kc *keyChain[T]) GetValidator(id string) (Status, func(a T) (bool, error), error) {
 	if kc == nil {
-		return nil, ErrNilReceiver{}
+		return Status{}, nil, ErrNilReceiver{}
 	}
 	if kc.validators == nil {
-		return nil, ErrNoValidatorExist{}
+		return Status{}, nil, ErrNoValidatorExist{}
 	}
-	return kc.validators.Get(label), nil
+	status, fn := kc.validators.Get(id)
+	return status, fn, nil
 }
 
-// SetValidator adds or updates a validator function for a given label.
+// SetValidator adds or updates a validator function for a given status.
 // It also maintains the order in which validators were added.
-func (kc *keyChain[T]) SetValidator(label ID, fn func(a T) (bool, error)) error {
+func (kc *keyChain[T]) SetValidator(status Status, fn func(a T) (bool, error)) error {
 	if kc == nil {
 		return ErrNilReceiver{}
 	}
 	if kc.validators == nil {
 		kc.validators = validatorsMap[T]{}
 	}
-	if _, exists := kc.validators[label]; !exists {
-		kc.order = append(kc.order, label)
+	if _, exists := kc.validators[status.ID]; !exists {
+		kc.order = append(kc.order, status.ID)
 	}
-	kc.validators.Set(label, fn)
+	kc.validators.Set(status, fn)
 	return nil
 }
 
@@ -145,82 +209,90 @@ func (kc *keyChain[T]) SetCondition(condition BitwiseID) error {
 
 // Validate processes the given data against all registered validators according
 // to the set bitwise condition (NOT, AND, OR, XOR). It returns the resulting
-// ID label, a boolean indicating overall success, and a slice of any errors
+// Status, a boolean indicating overall success, and a slice of any errors
 // encountered.
-func (kc *keyChain[T]) Validate(data T, defaultLabel ID) (ID, bool, []error) {
+func (kc *keyChain[T]) Validate(data T, defaultStatus StatusGetter) (StatusGetter, bool, []error) {
 	if kc == nil {
-		return "", false, []error{ErrNilReceiver{}}
+		return nil, false, []error{ErrNilReceiver{}}
 	}
 	if kc.validators == nil {
-		return defaultLabel, false, nil
+		return defaultStatus, false, nil
 	}
 	var (
 		ok   bool
-		lbl  ID
+		lbl  Status
 		err  error
 		errs []error
-		fn   func(a T) (bool, error)
 	)
 	switch kc.condition {
 	case NOT:
-		for _, label := range kc.order {
-			if fn = kc.validators.Get(label); fn == nil {
+		for _, id := range kc.order {
+			status, fn := kc.validators.Get(id)
+			if fn == nil {
 				continue
 			}
 			if ok, _ = fn(data); !ok {
-				lbl = label
+				lbl = status
 				continue
 			}
-			return defaultLabel, false, errs
+			return defaultStatus, false, errs
 		}
-		return lbl, true, nil
+		return &lbl, true, nil
 	case AND:
-		for _, label := range kc.order {
-			if fn = kc.validators.Get(label); fn == nil {
+		for _, id := range kc.order {
+			status, fn := kc.validators.Get(id)
+			if fn == nil {
 				continue
 			}
 			ok, err = fn(data)
 			if !ok {
-				return defaultLabel, false, append(errs, err)
+				if err != nil {
+					errs = append(errs, err)
+				}
+				return defaultStatus, false, errs
 			}
-			lbl = label
+			lbl = status
 		}
-		return lbl, ok, nil
+		return &lbl, ok, nil
 	case OR:
-		for _, label := range kc.order {
-			if fn = kc.validators.Get(label); fn == nil {
+		for _, id := range kc.order {
+			status, fn := kc.validators.Get(id)
+			if fn == nil {
 				continue
 			}
 			ok, err = fn(data)
 			if ok {
-				return label, ok, nil
+				return &status, true, nil
 			}
-			errs = append(errs, err)
+			if err != nil {
+				errs = append(errs, err)
+			}
 		}
-		return defaultLabel, false, errs
+		return defaultStatus, false, errs
 	case XOR:
 		var trueCount uint
-		for _, label := range kc.order {
-			if fn = kc.validators.Get(label); fn == nil {
+		for _, id := range kc.order {
+			status, fn := kc.validators.Get(id)
+			if fn == nil {
 				continue
 			}
 			ok, err = fn(data)
 			if ok {
 				trueCount++
 				if trueCount > 1 {
-					return defaultLabel, false, nil
+					return defaultStatus, false, nil
 				}
-			} else {
+				lbl = status
+			} else if err != nil {
 				errs = append(errs, err)
 			}
-			lbl = label
 		}
 		if trueCount == 1 {
-			return lbl, true, nil
+			return &lbl, true, nil
 		}
-		return defaultLabel, false, errs
+		return defaultStatus, false, errs
 	}
-	return defaultLabel, false, nil
+	return defaultStatus, false, nil
 }
 
 // Reset clears all validators, the validation order, and the bitwise
