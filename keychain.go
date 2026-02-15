@@ -1,9 +1,6 @@
 package keycheck
 
-import (
-	"fmt"
-	"slices"
-)
+import "fmt"
 
 type (
 	ErrInvalidBitwiseID BitwiseID
@@ -31,13 +28,6 @@ const (
 	OR                   // Bitwise OR
 	XOR                  // Bitwise XOR (exclusive OR)
 )
-
-var bitwiseOps = [...]BitwiseID{
-	NOT,
-	AND,
-	OR,
-	XOR,
-}
 
 type (
 	StatusGetter interface {
@@ -112,9 +102,11 @@ var (
 	NONE    StatusGetter = &Status{ID: "NONE"}
 )
 
+var emptyStatus = &Status{}
+
 // IsValid checks if the BitwiseID is a defined operator.
 func (bid BitwiseID) IsValid() bool {
-	return int(bid) < len(bitwiseOps)
+	return bid <= XOR
 }
 
 type KeyChain[T any] interface {
@@ -129,7 +121,6 @@ type KeyChain[T any] interface {
 type keyChain[T any] struct {
 	validators validatorsMap[T]
 	condition  BitwiseID
-	order      []string
 }
 
 // NewKeyChain creates and returns a new KeyChain instance with a specified
@@ -140,9 +131,8 @@ func NewKeyChain[T any](condition BitwiseID) (KeyChain[T], error) {
 		return nil, ErrInvalidBitwiseID(condition)
 	}
 	return &keyChain[T]{
-		validators: validatorsMap[T]{},
+		validators: validatorsMap[T]{index: map[string]int{}},
 		condition:  condition,
-		order:      []string{},
 	}, nil
 }
 
@@ -152,13 +142,8 @@ func (kc *keyChain[T]) DelValidator(label string) error {
 	if kc == nil {
 		return ErrNilReceiver{}
 	}
-	if kc.validators == nil {
+	if kc.validators.index == nil {
 		return ErrNoValidatorExist{}
-	}
-	if _, exists := kc.validators[label]; exists {
-		kc.order = slices.DeleteFunc(kc.order, func(id string) bool {
-			return id == label
-		})
 	}
 	kc.validators.Del(label)
 	return nil
@@ -171,10 +156,10 @@ func (kc *keyChain[T]) GetValidator(id string) (Status, func(a T) (bool, error),
 	if kc == nil {
 		return Status{}, nil, ErrNilReceiver{}
 	}
-	if kc.validators == nil {
+	if kc.validators.index == nil {
 		return Status{}, nil, ErrNoValidatorExist{}
 	}
-	status, fn := kc.validators.Get(id)
+	status, fn, _ := kc.validators.Get(id)
 	return status, fn, nil
 }
 
@@ -184,11 +169,8 @@ func (kc *keyChain[T]) SetValidator(status Status, fn func(a T) (bool, error)) e
 	if kc == nil {
 		return ErrNilReceiver{}
 	}
-	if kc.validators == nil {
-		kc.validators = validatorsMap[T]{}
-	}
-	if _, exists := kc.validators[status.ID]; !exists {
-		kc.order = append(kc.order, status.ID)
+	if kc.validators.index == nil {
+		kc.validators = validatorsMap[T]{index: map[string]int{}}
 	}
 	kc.validators.Set(status, fn)
 	return nil
@@ -215,32 +197,40 @@ func (kc *keyChain[T]) Validate(data T, defaultStatus StatusGetter) (StatusGette
 	if kc == nil {
 		return nil, false, []error{ErrNilReceiver{}}
 	}
-	if kc.validators == nil {
+	if kc.validators.index == nil {
 		return defaultStatus, false, nil
 	}
+
 	var (
 		ok   bool
-		lbl  Status
 		err  error
 		errs []error
 	)
+
 	switch kc.condition {
 	case NOT:
-		for _, id := range kc.order {
-			status, fn := kc.validators.Get(id)
+		var lbl StatusGetter
+		for i := range kc.validators.entries {
+			entry := &kc.validators.entries[i]
+			fn := entry.validator
 			if fn == nil {
 				continue
 			}
 			if ok, _ = fn(data); !ok {
-				lbl = status
+				lbl = &entry.status
 				continue
 			}
 			return defaultStatus, false, errs
 		}
-		return &lbl, true, nil
+		if lbl == nil {
+			lbl = emptyStatus
+		}
+		return lbl, true, nil
 	case AND:
-		for _, id := range kc.order {
-			status, fn := kc.validators.Get(id)
+		lbl := StatusGetter(emptyStatus)
+		for i := range kc.validators.entries {
+			entry := &kc.validators.entries[i]
+			fn := entry.validator
 			if fn == nil {
 				continue
 			}
@@ -251,48 +241,109 @@ func (kc *keyChain[T]) Validate(data T, defaultStatus StatusGetter) (StatusGette
 				}
 				return defaultStatus, false, errs
 			}
-			lbl = status
+			lbl = &entry.status
 		}
-		return &lbl, ok, nil
+		return lbl, ok, nil
 	case OR:
-		for _, id := range kc.order {
-			status, fn := kc.validators.Get(id)
-			if fn == nil {
-				continue
-			}
-			ok, err = fn(data)
-			if ok {
-				return &status, true, nil
-			}
-			if err != nil {
-				errs = append(errs, err)
-			}
-		}
-		return defaultStatus, false, errs
+		return kc.validateOR(data, defaultStatus)
 	case XOR:
-		var trueCount uint
-		for _, id := range kc.order {
-			status, fn := kc.validators.Get(id)
-			if fn == nil {
-				continue
-			}
-			ok, err = fn(data)
-			if ok {
-				trueCount++
-				if trueCount > 1 {
-					return defaultStatus, false, nil
-				}
-				lbl = status
-			} else if err != nil {
-				errs = append(errs, err)
-			}
-		}
-		if trueCount == 1 {
-			return &lbl, true, nil
-		}
-		return defaultStatus, false, errs
+		return kc.validateXOR(data, defaultStatus)
 	}
 	return defaultStatus, false, nil
+}
+
+func (kc *keyChain[T]) validateOR(data T, defaultStatus StatusGetter) (StatusGetter, bool, []error) {
+	entries := kc.validators.entries
+	var (
+		bufErrs  [32]error
+		heapErrs []error
+		errCount int
+		usedHeap bool
+	)
+	for i := range entries {
+		entry := &entries[i]
+		fn := entry.validator
+		if fn == nil {
+			continue
+		}
+		ok, err := fn(data)
+		if ok {
+			return &entry.status, true, nil
+		}
+		if err != nil {
+			if !usedHeap && errCount < len(bufErrs) {
+				bufErrs[errCount] = err
+			} else {
+				if !usedHeap {
+					heapErrs = make([]error, errCount, errCount+len(entries)-i)
+					copy(heapErrs, bufErrs[:errCount])
+					usedHeap = true
+				}
+				heapErrs = append(heapErrs, err)
+			}
+			errCount++
+		}
+	}
+	if errCount == 0 {
+		return defaultStatus, false, nil
+	}
+	if usedHeap {
+		return defaultStatus, false, heapErrs
+	}
+	errs := make([]error, errCount)
+	copy(errs, bufErrs[:errCount])
+	return defaultStatus, false, errs
+}
+
+func (kc *keyChain[T]) validateXOR(data T, defaultStatus StatusGetter) (StatusGetter, bool, []error) {
+	var trueCount uint
+	lbl := StatusGetter(emptyStatus)
+	entries := kc.validators.entries
+	var (
+		bufErrs  [32]error
+		heapErrs []error
+		errCount int
+		usedHeap bool
+	)
+	for i := range entries {
+		entry := &entries[i]
+		fn := entry.validator
+		if fn == nil {
+			continue
+		}
+		ok, err := fn(data)
+		if ok {
+			trueCount++
+			if trueCount > 1 {
+				return defaultStatus, false, nil
+			}
+			lbl = &entry.status
+		} else if err != nil {
+			if !usedHeap && errCount < len(bufErrs) {
+				bufErrs[errCount] = err
+			} else {
+				if !usedHeap {
+					heapErrs = make([]error, errCount, errCount+len(entries)-i)
+					copy(heapErrs, bufErrs[:errCount])
+					usedHeap = true
+				}
+				heapErrs = append(heapErrs, err)
+			}
+			errCount++
+		}
+	}
+	if trueCount == 1 {
+		return lbl, true, nil
+	}
+	if errCount == 0 {
+		return defaultStatus, false, nil
+	}
+	if usedHeap {
+		return defaultStatus, false, heapErrs
+	}
+	errs := make([]error, errCount)
+	copy(errs, bufErrs[:errCount])
+	return defaultStatus, false, errs
 }
 
 // Reset clears all validators, the validation order, and the bitwise
@@ -302,6 +353,5 @@ func (kc *keyChain[T]) Reset() {
 		return
 	}
 	kc.condition = 0
-	kc.validators = nil
-	kc.order = nil
+	kc.validators = validatorsMap[T]{}
 }
