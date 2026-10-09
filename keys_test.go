@@ -237,6 +237,7 @@ func TestBytesKeyPresentNil(t *testing.T) {
 	}
 }
 
+// TestKeysInvalidConfiguration verifies nil selectors and unsupported key configurations.
 func TestKeysInvalidConfiguration(t *testing.T) {
 	tests := []struct {
 		name string
@@ -244,12 +245,12 @@ func TestKeysInvalidConfiguration(t *testing.T) {
 		want error
 	}{
 		{"string_nil_selector", StringKey[bool](nil, EqualTo, ""), ErrInvalidKey},
-		{"bytes_nil_selector", BytesKey[bool](nil, EqualTo, nil), ErrInvalidKey},
+		{"bytes_nil_selector", BytesKey[bool, []byte](nil, EqualTo, nil), ErrInvalidKey},
 		{"int_nil_selector", IntKey[bool](nil, EqualTo, 0), ErrInvalidKey},
-		{"float_nil_selector", FloatKey[bool](nil, EqualTo, 0), ErrInvalidKey},
+		{"float_nil_selector", FloatKey[bool, float64](nil, EqualTo, 0), ErrInvalidKey},
 		{"bool_nil_selector", BoolKey[bool](nil, Is, false), ErrInvalidKey},
-		{"list_nil_selector", ListKey[bool](nil, Contains, ""), ErrInvalidKey},
-		{"dictionary_nil_selector", DictionaryKey[bool](nil, HasKey, ""), ErrInvalidKey},
+		{"list_nil_selector", ListKey[bool, []string](nil, Contains, ""), ErrInvalidKey},
+		{"dictionary_nil_selector", DictionaryKey[bool, map[string]string](nil, HasKey, ""), ErrInvalidKey},
 		{"string_invalid_operator", StringKey(func(bool) (string, bool) { return "", true }, GreaterThan, ""), ErrInvalidOperator},
 		{"bytes_invalid_operator", BytesKey(func(bool) ([]byte, bool) { return nil, true }, HasKey, nil), ErrInvalidOperator},
 		{"int_invalid_operator", IntKey(func(bool) (int64, bool) { return 0, true }, Exists, 0), ErrInvalidOperator},

@@ -22,6 +22,7 @@ const (
 	Custom  Status = "CUSTOM"
 	Retry   Status = "RETRY"
 	Ban     Status = "BAN"
+	Error   Status = "ERROR"
 	None    Status = "NONE"
 )
 
@@ -32,6 +33,7 @@ type Mode uint8
 const (
 	// Or matches when any key matches.
 	Or Mode = iota
+
 	// And matches when every key matches.
 	And
 )
@@ -185,7 +187,7 @@ type Program[T any] struct {
 
 // Compiler configures resource limits for compiling any input type.
 // Its zero value uses the default limits.
-// A Compiler can be reused across input types through its generic [Compiler.Compile] method.
+// A [Compiler] can be reused across input types through its generic [Compiler.Compile] method.
 // It retains no programs, caches, or input values between calls.
 // Concurrent compilation is safe while its configuration remains unchanged.
 type Compiler struct {
@@ -243,10 +245,20 @@ func (c *compiler) key[T any](key Key[T]) (predicate[T], error) {
 // including repeated occurrences inside shared groups.
 // Identical regex patterns share one compiled expression within this compilation.
 // The program retains selectors and custom predicates, including their captured state.
-// Callers must not mutate configuration slices while Compile reads them.
+// Callers must not mutate configuration slices while [Compile] reads them.
 // Invalid configuration returns a [CompileError] and no partial program.
 func Compile[T any](chains ...Chain[T]) (*Program[T], error) {
 	return (Compiler{}).Compile(chains...)
+}
+
+// MustCompile validates and snapshots chains into an immutable [Program].
+// It has the same contracts as [Compile] and panics with the error returned by [Compile] on failure.
+func MustCompile[T any](chains ...Chain[T]) *Program[T] {
+	program, err := (Compiler{}).Compile(chains...)
+	if err != nil {
+		panic(err)
+	}
+	return program
 }
 
 // Compile validates and snapshots chains according to the compiler's limits.
@@ -315,6 +327,16 @@ func (p *Program[T]) Evaluate(input T, fallback Status) (Result, error) {
 	}
 	for i := range p.chains {
 		chain := &p.chains[i]
+		if len(chain.keys) == 1 {
+			matched, err := chain.keys[0](input)
+			if err != nil {
+				return result, &EvalError{Chain: chain.index, Key: 0, Err: err}
+			}
+			if matched {
+				return Result{Status: chain.status, Matched: true, Chain: chain.index}, nil
+			}
+			continue
+		}
 		matched, err := chain.evaluate(input)
 		if err != nil {
 			return result, err
@@ -341,6 +363,16 @@ func (p *Program[T]) AppendMatches(dst []Result, input T) ([]Result, error) {
 	}
 	for i := range p.chains {
 		chain := &p.chains[i]
+		if len(chain.keys) == 1 {
+			matched, err := chain.keys[0](input)
+			if err != nil {
+				return dst, &EvalError{Chain: chain.index, Key: 0, Err: err}
+			}
+			if matched {
+				dst = append(dst, Result{Status: chain.status, Matched: true, Chain: chain.index})
+			}
+			continue
+		}
 		matched, err := chain.evaluate(input)
 		if err != nil {
 			return dst, err
@@ -353,28 +385,29 @@ func (p *Program[T]) AppendMatches(dst []Result, input T) ([]Result, error) {
 }
 
 func (c *compiledChain[T]) evaluate(input T) (bool, error) {
-	if c.mode == And {
+	index := c.index
+	if c.mode != And {
 		for i, key := range c.keys {
 			ok, err := key(input)
 			if err != nil {
-				return false, &EvalError{Chain: c.index, Key: i, Err: err}
+				return false, &EvalError{Chain: index, Key: i, Err: err}
 			}
-			if !ok {
-				return false, nil
+			if ok {
+				return true, nil
 			}
 		}
-		return true, nil
+		return false, nil
 	}
 	for i, key := range c.keys {
 		ok, err := key(input)
 		if err != nil {
-			return false, &EvalError{Chain: c.index, Key: i, Err: err}
+			return false, &EvalError{Chain: index, Key: i, Err: err}
 		}
-		if ok {
-			return true, nil
+		if !ok {
+			return false, nil
 		}
 	}
-	return false, nil
+	return true, nil
 }
 
 // CustomKey creates a key from a caller-owned predicate.

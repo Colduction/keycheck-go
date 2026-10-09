@@ -43,6 +43,9 @@ result, err := program.Evaluate(204, keycheck.None)
 A **selector** is a `func(T) (V, bool)` that returns a value and reports whether it is present.
 `T` can be any struct, pointer, scalar, slice, or map you already have.
 
+`keycheck.MustCompile(chains...)` returns a program directly and panics with the compilation error on invalid configuration.
+It uses the same validation, snapshots, and default limits as `Compile`.
+
 ## Evaluation
 
 | Rule        | Behavior                                                                                           |
@@ -83,19 +86,35 @@ An unchanged `Compiler` is safe for concurrent use.
 
 ## Keys
 
-| Constructor     | Selects                                 | Operators                                                                                       |
-| --------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `StringKey`     | `string`                                | `EqualTo`, `Contains`, `StartsWith`, `EndsWith`, `MatchesRegex`, `Exists`, and their negations  |
-| `BytesKey`      | `[]byte`                                | Same as `StringKey`, without copying the input                                                  |
-| `IntKey`        | `int64`                                 | `EqualTo`, `NotEqualTo`, `LessThan`, `LessThanOrEqualTo`, `GreaterThan`, `GreaterThanOrEqualTo` |
-| `FloatKey`      | `float64`                               | Same as `IntKey`                                                                                |
-| `BoolKey`       | `bool`                                  | `Is`, `IsNot`                                                                                   |
-| `ListKey`       | `[]string`                              | `Contains`, `DoesNotContain`, `Exists`, `DoesNotExist`                                          |
-| `DictionaryKey` | `map[string]string`                     | `HasKey`, `HasValue`, `Exists`, and their negations                                             |
-| `CompareKey`    | Two selectors of one `cmp.Ordered` type | Same as `IntKey`, with both operands chosen at run time                                         |
-| `CustomKey`     | Your `T`                                | Your `func(T) (bool, error)`                                                                    |
+| Constructor     | Selects                                         | Operators                                                                                       |
+| --------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `StringKey`     | Any type with underlying `string`               | `EqualTo`, `Contains`, `StartsWith`, `EndsWith`, `MatchesRegex`, `Exists`, and their negations  |
+| `BytesKey`      | Any type with underlying `[]byte`               | Same as `StringKey`, without copying the input                                                  |
+| `IntKey`        | Any signed or unsigned integer type             | `EqualTo`, `NotEqualTo`, `LessThan`, `LessThanOrEqualTo`, `GreaterThan`, `GreaterThanOrEqualTo` |
+| `FloatKey`      | Any type with underlying `float32` or `float64` | Same as `IntKey`                                                                                |
+| `BoolKey`       | Any type with underlying `bool`                 | `Is`, `IsNot`                                                                                   |
+| `ListKey`       | Any slice of comparable elements                | `Contains`, `DoesNotContain`, `Exists`, `DoesNotExist`                                          |
+| `DictionaryKey` | Any map with one comparable key/value type      | `HasKey`, `HasValue`, `Exists`, and their negations                                             |
+| `CompareKey`    | Two selectors of one `cmp.Ordered` type         | Same as `IntKey`, with both operands chosen at run time                                         |
+| `CustomKey`     | Your `T`                                        | Your `func(T) (bool, error)`                                                                    |
 
 Negations are `NotEqualTo` and the `DoesNot…` operators, such as `DoesNotContain` and `DoesNotMatchRegex`.
+
+Type arguments are inferred from the selector and expected value. Defined types work directly, without conversion selectors:
+
+```go
+type ID uint64
+type Score float32
+
+idKey := keycheck.IntKey(func(id ID) (ID, bool) { return id, true }, keycheck.GreaterThan, 42)
+scoreKey := keycheck.FloatKey(func(score Score) (Score, bool) { return score, true }, keycheck.GreaterThanOrEqualTo, 0.5)
+listKey := keycheck.ListKey(func(ids []ID) ([]ID, bool) { return ids, true }, keycheck.Contains, 42)
+```
+
+`IntKey` includes `uintptr`; numeric comparisons preserve the selected type's precision and signedness.
+`DictionaryKey` uses the same type for map keys, map values, and the expected operand, such as `map[ID]ID`.
+Lists and dictionaries use native Go equality, including its NaN behavior and interface comparison or hashing panics for non-comparable dynamic values.
+If a selector is an untyped `nil`, provide explicit value/collection type arguments, such as `BytesKey[Input, []byte](nil, EqualTo, nil)`; an actual typed selector supplies those arguments automatically.
 
 <details>
 <summary><strong>Matching rules</strong></summary>

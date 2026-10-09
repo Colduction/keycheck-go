@@ -18,33 +18,80 @@ func CompareKey[T any, V cmp.Ordered](left Selector[T, V], op Operator, right Se
 			return nil, ErrInvalidKey
 		}
 		switch op {
-		case EqualTo, NotEqualTo, LessThan, LessThanOrEqualTo, GreaterThan, GreaterThanOrEqualTo:
+		case EqualTo:
+			return func(input T) (bool, error) {
+				first, present := left(input)
+				if !present {
+					return false, nil
+				}
+				second, present := right(input)
+				if !present {
+					return false, nil
+				}
+				return first == second, nil
+			}, nil
+		case NotEqualTo:
+			return func(input T) (bool, error) {
+				first, present := left(input)
+				if !present {
+					return false, nil
+				}
+				second, present := right(input)
+				if !present {
+					return false, nil
+				}
+				return first != second, nil
+			}, nil
+		case LessThan:
+			return func(input T) (bool, error) {
+				first, present := left(input)
+				if !present {
+					return false, nil
+				}
+				second, present := right(input)
+				if !present {
+					return false, nil
+				}
+				return first < second, nil
+			}, nil
+		case LessThanOrEqualTo:
+			return func(input T) (bool, error) {
+				first, present := left(input)
+				if !present {
+					return false, nil
+				}
+				second, present := right(input)
+				if !present {
+					return false, nil
+				}
+				return first <= second, nil
+			}, nil
+		case GreaterThan:
+			return func(input T) (bool, error) {
+				first, present := left(input)
+				if !present {
+					return false, nil
+				}
+				second, present := right(input)
+				if !present {
+					return false, nil
+				}
+				return first > second, nil
+			}, nil
+		case GreaterThanOrEqualTo:
+			return func(input T) (bool, error) {
+				first, present := left(input)
+				if !present {
+					return false, nil
+				}
+				second, present := right(input)
+				if !present {
+					return false, nil
+				}
+				return first >= second, nil
+			}, nil
 		default:
 			return nil, ErrInvalidOperator
 		}
-		return func(input T) (bool, error) {
-			first, present := left(input)
-			if !present {
-				return false, nil
-			}
-			second, present := right(input)
-			if !present {
-				return false, nil
-			}
-			switch op {
-			case EqualTo:
-				return first == second, nil
-			case NotEqualTo:
-				return first != second, nil
-			case LessThan:
-				return first < second, nil
-			case LessThanOrEqualTo:
-				return first <= second, nil
-			case GreaterThan:
-				return first > second, nil
-			default:
-				return first >= second, nil
-			}
-		}, nil
 	}}
 }
