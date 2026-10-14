@@ -470,14 +470,14 @@ func TestGenericKeysTypeInference(t *testing.T) {
 	assertKeyMatch(t, DictionaryKey(selectDictionary, HasKey, 42), dictionary{42: 7}, true)
 	assertKeyMatch(t, BytesKey(selectData, EqualTo, []byte("ready")), data("ready"), true)
 	assertKeyMatch(t, BytesKey(selectData, EqualTo, nil), data(nil), true)
-	assertKeyMatch(t, StringKey[text](selectText, EqualTo, "ready"), text("ready"), true)
-	assertKeyMatch(t, IntKey[id](selectID, GreaterThan, 42), id(43), true)
-	assertKeyMatch(t, FloatKey[score](selectScore, GreaterThanOrEqualTo, 0.5), score(0.5), true)
-	assertKeyMatch(t, BoolKey[flag](selectFlag, Is, true), flag(true), true)
-	assertKeyMatch(t, ListKey[list](selectList, Contains, 42), list{42}, true)
-	assertKeyMatch(t, DictionaryKey[dictionary](selectDictionary, HasValue, 7), dictionary{42: 7}, true)
-	assertKeyMatch(t, BytesKey[data](selectData, EqualTo, []byte("ready")), data("ready"), true)
-	assertKeyMatch(t, BytesKey[data](selectData, EqualTo, nil), data(nil), true)
+	assertKeyMatch(t, StringKey(selectText, EqualTo, "ready"), text("ready"), true)
+	assertKeyMatch(t, IntKey(selectID, GreaterThan, 42), id(43), true)
+	assertKeyMatch(t, FloatKey(selectScore, GreaterThanOrEqualTo, 0.5), score(0.5), true)
+	assertKeyMatch(t, BoolKey(selectFlag, Is, true), flag(true), true)
+	assertKeyMatch(t, ListKey(selectList, Contains, 42), list{42}, true)
+	assertKeyMatch(t, DictionaryKey(selectDictionary, HasValue, 7), dictionary{42: 7}, true)
+	assertKeyMatch(t, BytesKey(selectData, EqualTo, []byte("ready")), data("ready"), true)
+	assertKeyMatch(t, BytesKey(selectData, EqualTo, nil), data(nil), true)
 }
 
 // TestGenericKeysAllocations verifies allocation-free evaluation for defined operand types.

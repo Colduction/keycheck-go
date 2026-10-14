@@ -106,12 +106,12 @@ type Chain[T any] struct {
 	// Status is the result when this chain matches and must not be empty.
 	Status Status
 
-	// Mode combines keys using [Or] or [And], with left-to-right short-circuiting.
-	Mode Mode
-
 	// Keys contains the predicates in evaluation order.
 	// [Compile] snapshots this slice; later changes do not affect the program.
 	Keys []Key[T]
+
+	// Mode combines keys using [Or] or [And], with left-to-right short-circuiting.
+	Mode Mode
 }
 
 // Result describes an evaluation without retaining its input.
@@ -129,14 +129,14 @@ type Result struct {
 // CompileError identifies invalid configuration.
 // It supports [errors.Is] and [errors.As] through [CompileError.Unwrap].
 type CompileError struct {
+	// Err describes the invalid configuration.
+	Err error
+
 	// Chain is the original zero-based chain index.
 	Chain int
 
 	// Key is the zero-based key index, or -1 for a chain-level error.
 	Key int
-
-	// Err describes the invalid configuration.
-	Err error
 }
 
 // Error returns the configuration error with its location.
@@ -155,14 +155,14 @@ func (e *CompileError) Unwrap() error {
 // EvalError identifies a failing custom predicate.
 // It supports [errors.Is] and [errors.As] through [EvalError.Unwrap].
 type EvalError struct {
+	// Err is the error returned by the custom predicate.
+	Err error
+
 	// Chain is the original zero-based chain index.
 	Chain int
 
 	// Key is the zero-based key index.
 	Key int
-
-	// Err is the error returned by the custom predicate.
-	Err error
 }
 
 // Error returns the predicate error with its location.
@@ -207,9 +207,9 @@ type predicate[T any] func(T) (bool, error)
 
 type compiledChain[T any] struct {
 	status Status
-	mode   Mode
-	index  int
 	keys   []predicate[T]
+	index  int
+	mode   Mode
 }
 
 type compiler struct {
@@ -385,29 +385,28 @@ func (p *Program[T]) AppendMatches(dst []Result, input T) ([]Result, error) {
 }
 
 func (c *compiledChain[T]) evaluate(input T) (bool, error) {
-	index := c.index
-	if c.mode != And {
+	if c.mode == And {
 		for i, key := range c.keys {
 			ok, err := key(input)
 			if err != nil {
-				return false, &EvalError{Chain: index, Key: i, Err: err}
+				return false, &EvalError{Chain: c.index, Key: i, Err: err}
 			}
-			if ok {
-				return true, nil
+			if !ok {
+				return false, nil
 			}
 		}
-		return false, nil
+		return true, nil
 	}
 	for i, key := range c.keys {
 		ok, err := key(input)
 		if err != nil {
-			return false, &EvalError{Chain: index, Key: i, Err: err}
+			return false, &EvalError{Chain: c.index, Key: i, Err: err}
 		}
-		if !ok {
-			return false, nil
+		if ok {
+			return true, nil
 		}
 	}
-	return true, nil
+	return false, nil
 }
 
 // CustomKey creates a key from a caller-owned predicate.

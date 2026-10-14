@@ -19,11 +19,11 @@ const (
 )
 
 type textTest struct {
-	kind         textKind
-	fold         bool
+	regex        *regexMatcher
 	literal      string
 	alternatives []string
-	regex        *regexMatcher
+	kind         textKind
+	fold         bool
 }
 
 type regexMatcher struct {

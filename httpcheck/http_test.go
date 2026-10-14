@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	keycheck "github.com/colduction/keycheck-go"
+	"github.com/colduction/keycheck-go"
 )
 
 type untouchedBody struct{}
@@ -21,6 +21,101 @@ func (untouchedBody) Close() error {
 }
 
 type forkHeader map[string][]string
+
+// TestAddress checks exact caller-supplied text and independent presence.
+func TestAddress(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input Input
+	}{
+		{name: "absent"},
+		{
+			name: "absent with metadata",
+			input: Input{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"X-Example": {"header"}},
+				Trailer:    http.Header{"X-Example": {"trailer"}},
+				Body:       []byte("ready"),
+			},
+		},
+		{name: "address only", input: Input{Address: "https://example.com/ready"}},
+		{
+			name: "case escaping query fragment",
+			input: Input{
+				Address:    "HTTPS://Example.COM/Ready%2fNow?q=A%2FB&x=One+Two#Part",
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"X-Example": {"header"}},
+				Trailer:    http.Header{"X-Example": {"trailer"}},
+				Body:       []byte("ready"),
+			},
+		},
+		{name: "surrounding whitespace", input: Input{Address: " https://example.com/ready\t"}},
+		{name: "whitespace only", input: Input{Address: " \t\n"}},
+		{name: "malformed", input: Input{Address: "://%zz not a URL"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, present := Address(test.input)
+			if got != test.input.Address || present != (test.input.Address != "") {
+				t.Fatalf("Address = %q, %v; want %q, %v", got, present, test.input.Address, test.input.Address != "")
+			}
+		})
+	}
+}
+
+// TestAddressRules checks [Address] through [keycheck.StringKey] operators.
+func TestAddressRules(t *testing.T) {
+	const address = "https://example.com/ready?state=ok#result"
+	for _, test := range []struct {
+		name    string
+		address string
+		op      keycheck.Operator
+		right   string
+		want    bool
+	}{
+		{"equal", address, keycheck.EqualTo, address, true},
+		{"equal mismatch", address, keycheck.EqualTo, "https://example.com/failed", false},
+		{"case sensitive", address, keycheck.EqualTo, "HTTPS://example.com/ready?state=ok#result", false},
+		{"contains", address, keycheck.Contains, "?state=ok", true},
+		{"contains mismatch", address, keycheck.Contains, "state=failed", false},
+		{"prefix", address, keycheck.StartsWith, "https://example.com/", true},
+		{"prefix mismatch", address, keycheck.StartsWith, "http://", false},
+		{"suffix", address, keycheck.EndsWith, "#result", true},
+		{"suffix mismatch", address, keycheck.EndsWith, "#failed", false},
+		{"regex", address, keycheck.MatchesRegex, `^https://example\.com/ready\?state=ok#result$`, true},
+		{"regex mismatch", address, keycheck.MatchesRegex, `/failed$`, false},
+		{"exists", address, keycheck.Exists, "ignored", true},
+		{"does not exist", address, keycheck.DoesNotExist, "ignored", false},
+		{"absent exists", "", keycheck.Exists, "ignored", false},
+		{"absent does not exist", "", keycheck.DoesNotExist, "ignored", true},
+		{"malformed exists", "://%zz", keycheck.Exists, "ignored", true},
+		{"absent equal", "", keycheck.EqualTo, "", false},
+		{"not equal", address, keycheck.NotEqualTo, "other", true},
+		{"absent not equal", "", keycheck.NotEqualTo, "other", false},
+		{"does not contain", address, keycheck.DoesNotContain, "failed", true},
+		{"absent does not contain", "", keycheck.DoesNotContain, "failed", false},
+		{"does not start with", address, keycheck.DoesNotStartWith, "http://", true},
+		{"absent does not start with", "", keycheck.DoesNotStartWith, "http://", false},
+		{"does not end with", address, keycheck.DoesNotEndWith, "#failed", true},
+		{"absent does not end with", "", keycheck.DoesNotEndWith, "#failed", false},
+		{"does not match regex", address, keycheck.DoesNotMatchRegex, `/failed$`, true},
+		{"absent does not match regex", "", keycheck.DoesNotMatchRegex, `/failed$`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			program, err := keycheck.Compile(keycheck.Chain[Input]{
+				Status: keycheck.Success,
+				Mode:   keycheck.And,
+				Keys:   []keycheck.Key[Input]{keycheck.StringKey(Address, test.op, test.right)},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := program.Evaluate(Input{Address: test.address}, keycheck.None)
+			if err != nil || result.Matched != test.want {
+				t.Fatalf("Evaluate = %+v, %v; want matched %v", result, err, test.want)
+			}
+		})
+	}
+}
 
 // TestBody checks borrowed bytes and length with independent presence semantics.
 func TestBody(t *testing.T) {
@@ -139,17 +234,19 @@ func TestInputNamedHeaderMaps(t *testing.T) {
 
 // TestEvaluateLeavesResponseBodyUntouched checks field mapping, allocations, and shared immutable input.
 func TestEvaluateLeavesResponseBodyUntouched(t *testing.T) {
-	body := []byte("service ready")
+	address := "https://example.com/ready"
+	body := []byte(`{"ready":true}`)
 	program, err := keycheck.Compile(keycheck.Chain[Input]{
 		Status: keycheck.Success,
 		Mode:   keycheck.And,
 		Keys: []keycheck.Key[Input]{
+			keycheck.StringKey(Address, keycheck.EqualTo, "https://example.com/ready"),
 			keycheck.IntKey(StatusCode, keycheck.EqualTo, http.StatusOK),
-			keycheck.StringKey(Header("content-type"), keycheck.Contains, "text/plain"),
+			keycheck.StringKey(Header("content-type"), keycheck.Contains, "application/json"),
 			keycheck.ListKey(HeaderValues("x-state"), keycheck.Contains, "ready"),
 			keycheck.StringKey(Trailer("x-checksum"), keycheck.EqualTo, "verified"),
 			keycheck.ListKey(TrailerValues("x-checksum"), keycheck.Contains, "verified"),
-			keycheck.BytesKey(Body, keycheck.Contains, []byte("ready")),
+			keycheck.BytesKey(Body, keycheck.Contains, []byte(`"ready":true`)),
 			keycheck.IntKey(BodyLength, keycheck.EqualTo, int64(len(body))),
 		},
 	})
@@ -160,13 +257,13 @@ func TestEvaluateLeavesResponseBodyUntouched(t *testing.T) {
 	response := &http.Response{
 		StatusCode: http.StatusOK,
 		Header: http.Header{
-			"Content-Type": {"text/plain; charset=utf-8"},
+			"Content-Type": {"application/json"},
 			"X-State":      {"pending", "ready"},
 		},
 		Trailer: http.Header{"X-Checksum": {"verified"}},
 		Body:    responseBody,
 	}
-	input := Input{StatusCode: response.StatusCode, Header: response.Header, Trailer: response.Trailer, Body: body}
+	input := Input{Address: address, StatusCode: response.StatusCode, Header: response.Header, Trailer: response.Trailer, Body: body}
 	result, err := program.Evaluate(input, keycheck.None)
 	if err != nil || !result.Matched || result.Status != keycheck.Success || result.Chain != 0 {
 		t.Fatalf("Evaluate = %+v, %v", result, err)
@@ -176,7 +273,7 @@ func TestEvaluateLeavesResponseBodyUntouched(t *testing.T) {
 	}
 	if got := testing.AllocsPerRun(100, func() {
 		result, err := program.Evaluate(input, keycheck.None)
-		if err != nil || result.Status != keycheck.Success {
+		if err != nil || !result.Matched || result.Status != keycheck.Success {
 			t.Fatalf("Evaluate = %+v, %v", result, err)
 		}
 	}); got != 0 {
@@ -197,12 +294,13 @@ func TestEvaluateLeavesResponseBodyUntouched(t *testing.T) {
 	workers.Wait()
 }
 
-// Example maps response fields and an already available body into an input.
+// Example maps a supplied address, response fields, and an already available body into an input.
 func Example() {
 	program, err := keycheck.Compile(keycheck.Chain[Input]{
 		Status: keycheck.Success,
 		Mode:   keycheck.And,
 		Keys: []keycheck.Key[Input]{
+			keycheck.StringKey(Address, keycheck.EqualTo, "https://example.com/ready"),
 			keycheck.IntKey(StatusCode, keycheck.EqualTo, http.StatusOK),
 			keycheck.StringKey(Header("Content-Type"), keycheck.Contains, "application/json"),
 			keycheck.BytesKey(Body, keycheck.Contains, []byte(`"ready":true`)),
@@ -216,6 +314,7 @@ func Example() {
 		Header:     http.Header{"Content-Type": {"application/json"}},
 	}
 	input := Input{
+		Address:    "https://example.com/ready",
 		StatusCode: response.StatusCode,
 		Header:     response.Header,
 		Trailer:    response.Trailer,
@@ -226,12 +325,11 @@ func Example() {
 		panic(err)
 	}
 	fmt.Println(result.Status, result.Matched)
-	// Output: SUCCESS true
 }
 
 // BenchmarkEvaluate measures selectors with shared immutable HTTP metadata and body bytes.
 func BenchmarkEvaluate(b *testing.B) {
-	program, err := keycheck.Compile(keycheck.Chain[Input]{
+	chain := keycheck.Chain[Input]{
 		Status: keycheck.Success,
 		Mode:   keycheck.And,
 		Keys: []keycheck.Key[Input]{
@@ -239,7 +337,13 @@ func BenchmarkEvaluate(b *testing.B) {
 			keycheck.StringKey(Header("Content-Type"), keycheck.Contains, "application/json"),
 			keycheck.BytesKey(Body, keycheck.Contains, []byte(`"ready":true`)),
 		},
-	})
+	}
+	program, err := keycheck.Compile(chain)
+	if err != nil {
+		b.Fatal(err)
+	}
+	chain.Keys = append(chain.Keys, keycheck.StringKey(Address, keycheck.EqualTo, "https://example.com/ready"))
+	withAddress, err := keycheck.Compile(chain)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -248,23 +352,37 @@ func BenchmarkEvaluate(b *testing.B) {
 		Header:     http.Header{"Content-Type": {"application/json"}},
 		Body:       []byte(`{"ready":true}`),
 	}
-	b.Run("Serial", func(b *testing.B) {
-		b.ReportAllocs()
-		for b.Loop() {
-			if result, err := program.Evaluate(input, keycheck.None); err != nil || !result.Matched {
-				b.Fatalf("Evaluate = %+v, %v", result, err)
+	addressInput := input
+	addressInput.Address = "https://example.com/ready"
+	for _, benchmark := range []struct {
+		name     string
+		program  *keycheck.Program[Input]
+		input    Input
+		parallel bool
+	}{
+		{"Serial", program, input, false},
+		{"Parallel", program, input, true},
+		{"WithAddressSerial", withAddress, addressInput, false},
+		{"WithAddressParallel", withAddress, addressInput, true},
+	} {
+		b.Run(benchmark.name, func(b *testing.B) {
+			b.ReportAllocs()
+			if benchmark.parallel {
+				b.RunParallel(func(pb *testing.PB) {
+					for pb.Next() {
+						if result, err := benchmark.program.Evaluate(benchmark.input, keycheck.None); err != nil || !result.Matched {
+							b.Errorf("Evaluate = %+v, %v", result, err)
+							return
+						}
+					}
+				})
+				return
 			}
-		}
-	})
-	b.Run("Parallel", func(b *testing.B) {
-		b.ReportAllocs()
-		b.RunParallel(func(pb *testing.PB) {
-			for pb.Next() {
-				if result, err := program.Evaluate(input, keycheck.None); err != nil || !result.Matched {
-					b.Errorf("Evaluate = %+v, %v", result, err)
-					return
+			for b.Loop() {
+				if result, err := benchmark.program.Evaluate(benchmark.input, keycheck.None); err != nil || !result.Matched {
+					b.Fatalf("Evaluate = %+v, %v", result, err)
 				}
 			}
 		})
-	})
+	}
 }

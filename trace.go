@@ -5,6 +5,9 @@ package keycheck
 // Entries contain no selected values or input references of their own.
 // An error supplied by a custom predicate may itself retain caller-owned data.
 type TraceEntry struct {
+	// Err is the original predicate error, without the enclosing [EvalError].
+	Err error
+
 	// Chain is the original zero-based chain index.
 	Chain int
 
@@ -14,9 +17,6 @@ type TraceEntry struct {
 	// Matched is the boolean returned by the predicate.
 	// When Err is non-nil, this value does not represent a successful decision.
 	Matched bool
-
-	// Err is the original predicate error, without the enclosing [EvalError].
-	Err error
 }
 
 // AppendTrace evaluates input once and appends a trace of reached top-level keys to dst.

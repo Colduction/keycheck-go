@@ -1,4 +1,4 @@
-// Package httpcheck provides key selectors for borrowed HTTP metadata and caller-supplied bodies.
+// Package httpcheck provides key selectors for caller-supplied HTTP addresses, metadata, and bodies.
 // It sends no requests and accepts no response body streams.
 package httpcheck
 
@@ -9,19 +9,16 @@ import (
 )
 
 // Input provides borrowed HTTP data for synchronous key evaluation.
-// The zero value has no metadata or body.
-// Named header map types with the same underlying type assign directly to Header and Trailer.
+// The zero value has no address, metadata, or body.
+// Named header map types with the same underlying type assign directly to [Input.Header] and [Input.Trailer].
 // Callers must keep the maps, their value slices, and body bytes unchanged during evaluation.
-// An Input may be shared by concurrent evaluations while its data remains immutable.
+// An [Input] may be shared by concurrent evaluations while its data remains immutable.
 type Input struct {
-	// StatusCode supplies the HTTP status code; zero means absent.
-	StatusCode int
-
-	// Header supplies borrowed response headers independently of StatusCode.
+	// Header supplies borrowed response headers independently of [Input.StatusCode].
 	// Nil means no headers; keys must use canonical MIME header spelling.
 	Header map[string][]string
 
-	// Trailer supplies borrowed final response trailers independently of StatusCode.
+	// Trailer supplies borrowed final response trailers independently of [Input.StatusCode].
 	// Populate it only after the caller has consumed the response body.
 	// Nil means no trailers; keys must use canonical MIME header spelling.
 	Trailer map[string][]string
@@ -29,6 +26,19 @@ type Input struct {
 	// Body contains bytes already read by the caller and remains owned by the caller.
 	// Nil means absent; a non-nil empty slice means a present, empty body.
 	Body []byte
+
+	// StatusCode supplies the HTTP status code; zero means absent.
+	StatusCode int
+
+	// Address supplies the caller-chosen URL address; an empty string means absent.
+	// The text is selected unchanged, without parsing or normalization.
+	Address string
+}
+
+// Address returns the supplied URL address and reports whether it is nonempty.
+// It reads [Input.Address] unchanged, independently of other metadata.
+func Address(input Input) (string, bool) {
+	return input.Address, input.Address != ""
 }
 
 // Body returns the supplied body and reports whether it is present.

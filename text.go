@@ -44,8 +44,8 @@ type foldedLiteral struct {
 }
 
 type foldAnchor struct {
-	index int
 	forms []exactLiteral
+	index int
 }
 
 func compileFoldedLiteral(pattern string) foldedLiteral {

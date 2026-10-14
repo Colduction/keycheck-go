@@ -1,8 +1,8 @@
 # keycheck-go
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/colduction/keycheck-go.svg)](https://pkg.go.dev/github.com/colduction/keycheck-go)
-[![Go version](https://img.shields.io/github/go-mod/go-version/colduction/keycheck-go)](go.mod)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Go version](https://img.shields.io/github/go-mod/go-version/colduction/keycheck-go)](./go.mod)
+[![License](https://img.shields.io/github/license/colduction/keycheck-go)](./LICENSE)
 
 Compile ordered keychains once, then evaluate caller-owned values without I/O.
 The model follows OpenBullet2's KeyCheck; comparisons and regex follow Go semantics.
@@ -186,7 +186,8 @@ Errors pass through groups, including `Not`: `EvalError.Key` stays the top-level
 
 ## HTTP
 
-The `httpcheck` package evaluates response data your application has already read.
+The `httpcheck` package evaluates response data your application has already read and a URL address supplied by your application.
+In this example, `address` is the URL string your application wants to check.
 
 ```go
 program, err := keycheck.Compile(keycheck.Chain[httpcheck.Input]{
@@ -194,6 +195,7 @@ program, err := keycheck.Compile(keycheck.Chain[httpcheck.Input]{
 	Mode:   keycheck.And,
 	Keys: []keycheck.Key[httpcheck.Input]{
 		keycheck.IntKey(httpcheck.StatusCode, keycheck.EqualTo, http.StatusOK),
+		keycheck.StringKey(httpcheck.Address, keycheck.Contains, "/dashboard"),
 		keycheck.StringKey(httpcheck.Header("Content-Type"), keycheck.Contains, "application/json"),
 		keycheck.BytesKey(httpcheck.Body, keycheck.Contains, []byte(`"ready":true`)),
 	},
@@ -203,6 +205,7 @@ if err != nil {
 }
 
 result, err := program.Evaluate(httpcheck.Input{
+	Address:    address,
 	StatusCode: response.StatusCode,
 	Header:     response.Header,
 	Trailer:    response.Trailer, // Final trailers, after the body is consumed.
@@ -212,6 +215,7 @@ result, err := program.Evaluate(httpcheck.Input{
 
 | Selector                               | Selects                      | Absent when                            |
 | -------------------------------------- | ---------------------------- | -------------------------------------- |
+| `Address`                              | Supplied URL address         | It is empty                            |
 | `StatusCode`                           | Status code                  | It is zero                             |
 | `Header(name)`                         | First header value           | The header is missing or has no values |
 | `HeaderValues(name)`                   | All header values            | The header key is missing              |
@@ -223,6 +227,7 @@ result, err := program.Evaluate(httpcheck.Input{
 > Header names are canonicalized once; header maps you fill in yourself must use canonical keys, as `http.Header.Get` requires.
 
 `Input` borrows maps and bytes without copying. `http.Header` and forks with the same `map[string][]string` underlying type assign directly.
+Address keys compare the supplied text unchanged, without parsing or normalization. Your application chooses the original request URL or the URL reached after redirects.
 Byte keys match raw bytes and don't parse JSON, HTML, or cookies; parse once yourself and use typed selectors for structured checks.
 
 ## Concurrency and ownership
@@ -251,9 +256,6 @@ Measured on an AMD Ryzen 9 7950X with 4 KiB bodies and no match:
 | `Contains "<title>Dashboard</title>"` on HTML        |   484 ns |          1.57 µs |
 | `MatchesRegex "Invalid password\|Account locked\|…"` |   158 ns |          84.9 µs |
 | `MatchesRegex "[0-9]+ attempts? remaining"`          |   201 ns |          36.4 µs |
-
-Warm built-in evaluation measures 0 B/op. Compilation allocates, and regex execution can allocate internal state on first use or under higher concurrency.
-See [PERFORMANCE.md](PERFORMANCE.md) for the algorithms, sources, and full measurements.
 
 ## OpenBullet2 compatibility
 

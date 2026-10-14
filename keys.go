@@ -2,6 +2,7 @@ package keycheck
 
 import (
 	"cmp"
+	"slices"
 	"strings"
 	"unsafe"
 )
@@ -221,50 +222,32 @@ func orderedKey[T any, V cmp.Ordered](left Selector[T, V], op Operator, right V)
 		case EqualTo:
 			return func(input T) (bool, error) {
 				value, present := left(input)
-				if !present {
-					return false, nil
-				}
-				return value == right, nil
+				return value == right && present, nil
 			}, nil
 		case NotEqualTo:
 			return func(input T) (bool, error) {
 				value, present := left(input)
-				if !present {
-					return false, nil
-				}
-				return value != right, nil
+				return value != right && present, nil
 			}, nil
 		case LessThan:
 			return func(input T) (bool, error) {
 				value, present := left(input)
-				if !present {
-					return false, nil
-				}
-				return value < right, nil
+				return value < right && present, nil
 			}, nil
 		case LessThanOrEqualTo:
 			return func(input T) (bool, error) {
 				value, present := left(input)
-				if !present {
-					return false, nil
-				}
-				return value <= right, nil
+				return value <= right && present, nil
 			}, nil
 		case GreaterThan:
 			return func(input T) (bool, error) {
 				value, present := left(input)
-				if !present {
-					return false, nil
-				}
-				return value > right, nil
+				return value > right && present, nil
 			}, nil
 		case GreaterThanOrEqualTo:
 			return func(input T) (bool, error) {
 				value, present := left(input)
-				if !present {
-					return false, nil
-				}
-				return value >= right, nil
+				return value >= right && present, nil
 			}, nil
 		default:
 			return nil, ErrInvalidOperator
@@ -289,10 +272,7 @@ func BoolKey[T any, V ~bool](left Selector[T, V], op Operator, right V) Key[T] {
 		}
 		return func(input T) (bool, error) {
 			value, present := left(input)
-			if !present {
-				return false, nil
-			}
-			return value == right, nil
+			return value == right && present, nil
 		}, nil
 	}}
 }
@@ -329,10 +309,8 @@ func ListKey[T any, S ~[]V, V comparable](left Selector[T, S], op Operator, righ
 				if !present {
 					return false, nil
 				}
-				for _, item := range value {
-					if item == right {
-						return want, nil
-					}
+				if slices.Contains(value, right) {
+					return want, nil
 				}
 				return !want, nil
 			}, nil
